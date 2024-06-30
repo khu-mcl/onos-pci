@@ -7,70 +7,75 @@ export GO111MODULE=on
 
 .PHONY: build
 
-ONOS_PCI_VERSION := latest
+TARGET := onos-pci
+TARGET_TEST := onos-pci-test
+DOCKER_TAG ?= latest
 ONOS_PROTOC_VERSION := v0.6.6
 BUF_VERSION := 0.27.1
 
 build: # @HELP build the Go binaries and run all validations (default)
 build:
-	GOPRIVATE="github.com/onosproject/*" go build -o build/_output/onos-pci ./cmd/onos-pci
+	GOPRIVATE="github.com/onosproject/*" go build -o build/_output/${TARGET} ./cmd/${TARGET}
 
 build-tools:=$(shell if [ ! -d "./build/build-tools" ]; then cd build && git clone https://github.com/onosproject/build-tools.git; fi)
 include ./build/build-tools/make/onf-common.mk
 
 test: # @HELP run the unit tests and source code validation
 test: build deps linters license
-	go test -race github.com/onosproject/onos-pci/pkg/...
-	go test -race github.com/onosproject/onos-pci/cmd/...
+	go test -race github.com/onosproject/${TARGET}/pkg/...
+	go test -race github.com/onosproject/${TARGET}/cmd/...
 
-jenkins-test:  # @HELP run the unit tests and source code validation producing a junit style report for Jenkins
-jenkins-test: deps license linters
-	TEST_PACKAGES=github.com/onosproject/onos-pci/... ./build/build-tools/build/jenkins/make-unit
+#jenkins-test:  # @HELP run the unit tests and source code validation producing a junit style report for Jenkins
+#jenkins-test: deps license linters
+#	TEST_PACKAGES=github.com/onosproject/${TARGET}/... ./build/build-tools/build/jenkins/make-unit
 
 buflint: #@HELP run the "buf check lint" command on the proto files in 'api'
-	docker run -it -v `pwd`:/go/src/github.com/onosproject/onos-pci \
-		-w /go/src/github.com/onosproject/onos-pci/api \
+	docker run -it -v `pwd`:/go/src/github.com/onosproject/${TARGET} \
+		-w /go/src/github.com/onosproject/${TARGET}/api \
 		bufbuild/buf:${BUF_VERSION} check lint
 
 protos: # @HELP compile the protobuf files (using protoc-go Docker)
 protos:
-	docker run -it -v `pwd`:/go/src/github.com/onosproject/onos-pci \
-		-w /go/src/github.com/onosproject/onos-pci \
+	docker run -it -v `pwd`:/go/src/github.com/onosproject/${TARGET} \
+		-w /go/src/github.com/onosproject/${TARGET} \
 		--entrypoint build/bin/compile-protos.sh \
 		onosproject/protoc-go:${ONOS_PROTOC_VERSION}
 
 integration-tests: helmit-pci helmit-scale
 
 helmit-pci: integration-test-namespace # @HELP run PCI tests locally
-	helmit test -n test ./cmd/onos-pci-tests --timeout 30m --no-teardown --suite pci
+	helmit test -n test ./cmd/${TARGET_TEST} --timeout 30m --no-teardown --suite pci
 
 helmit-scale: integration-test-namespace # @HELP run PCI tests locally
-	helmit test -n test ./cmd/onos-pci-tests --timeout 30m --no-teardown --suite scale
+	helmit test -n test ./cmd/${TARGET_TEST} --timeout 30m --no-teardown --suite scale
 
-onos-pci-docker: # @HELP build onos-pci Docker image
-onos-pci-docker:
+docker-build: # @HELP build target Docker image
+docker-build:
 	@go mod vendor
-	docker build . -f build/onos-pci/Dockerfile \
-		-t onosproject/onos-pci:${ONOS_PCI_VERSION}
+	docker build . -f build/${TARGET}/Dockerfile \
+		-t ${DOCKER_REPOSITORY}${TARGET}:${DOCKER_TAG}
 	@rm -rf vendor
 
 images: # @HELP build all Docker images
-images: build onos-pci-docker
+images: build docker-build
+
+docker-push:
+	docker push ${DOCKER_REPOSITORY}${TARGET}:${DOCKER_TAG}
 
 kind: # @HELP build Docker images and add them to the currently configured kind cluster
 kind: images
 	@if [ "`kind get clusters`" = '' ]; then echo "no kind cluster found" && exit 1; fi
-	kind load docker-image onosproject/onos-pci:${ONOS_PCI_VERSION}
+	kind load docker-image ${DOCKER_REPOSITORY}${TARGET}:${DOCKER_TAG}
 
 all: build images
 
 publish: # @HELP publish version on github and dockerhub
-	./build/build-tools/publish-version ${VERSION} onosproject/onos-pci
+	./build/build-tools/publish-version ${VERSION} ${DOCKER_REPOSITORY}${TARGET}
 
-jenkins-publish: jenkins-tools # @HELP Jenkins calls this to publish artifacts
-	./build/bin/push-images
-	./build/build-tools/release-merge-commit
+#jenkins-publish: jenkins-tools # @HELP Jenkins calls this to publish artifacts
+#	./build/bin/push-images
+#	./build/build-tools/release-merge-commit
 
 clean:: # @HELP remove all the build artifacts
-	rm -rf ./build/_output ./vendor ./cmd/onos-pci/onos-pci ./cmd/onos/onos
-	go clean -testcache github.com/onosproject/onos-pci/...
+	rm -rf ./build/_output ./vendor ./cmd/${TARGET}/${TARGET} ./cmd/onos/onos
+	go clean -testcache github.com/onosproject/${TARGET}/...
